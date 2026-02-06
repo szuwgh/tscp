@@ -15,5 +15,8 @@ echo "2) Building OpenSSL..."
 echo "3) Building libssh2..."
 ./libssh2.sh
 
+echo "4) Building ncurses..."
+./ncurses.sh
+
 echo "✅ All dependencies built and installed to ../static"
 

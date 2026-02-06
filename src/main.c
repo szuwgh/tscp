@@ -141,14 +141,14 @@ int connect_to_host(const char *host, int port)
         return -1;
     }
 
-    // 检查地址类型，只处理IPv4地址[2,6](@ref)
+    // 检查地址类型，只处理IPv4地址[2,6]
     if (he->h_addrtype != AF_INET)
     {
         fprintf(stderr, "Error: Unsupported address type (only IPv4 supported)\n");
         return -1;
     }
 
-    // 循环遍历h_addr_list中的每个地址[2,5](@ref)
+    // 循环遍历h_addr_list中的每个地址[2,5]
     int i;
     for (i = 0; he->h_addr_list[i] != NULL; i++)
     {
@@ -165,10 +165,10 @@ int connect_to_host(const char *host, int port)
         sin.sin_family = AF_INET;
         sin.sin_port = htons(port);
 
-        // 复制当前IP地址到sockaddr_in结构[6,8](@ref)
+        // 复制当前IP地址到sockaddr_in结构[6,8]
         memcpy(&sin.sin_addr, he->h_addr_list[i], he->h_length);
 
-        // 将二进制IP转换为可读格式用于调试[4,8](@ref)
+        // 将二进制IP转换为可读格式用于调试[4,8]
         char ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, he->h_addr_list[i], ip_str, sizeof(ip_str));
         printf("尝试连接 %s:%d (IP: %s)\n", host, port, ip_str);

@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -15,6 +16,7 @@
 #include <sys/epoll.h>
 #include <stdatomic.h>
 #include "net.h"
+#include "conn.h"
 
 #define PACKETSIZE 16384 // 16KB
 
@@ -33,7 +35,7 @@ inline static int add_event(int epfd, int fd)
     event_t ev;
     ev.events = EPOLLIN | EPOLLEXCLUSIVE;
     ev.data.fd = fd;
-    return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
+    return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev); // 线程安全
 }
 
 static int get_event_fd(event_t *ev)
@@ -50,6 +52,16 @@ static struct net_conn *conn_new(int fd, struct tscontext *ctx)
     return conn;
 }
 
+void net_conn_setudata(struct net_conn *conn, void *udata)
+{
+    conn->udata = udata;
+}
+
+void *net_conn_udata(struct net_conn *conn)
+{
+    return conn->udata;
+}
+
 inline static void ts_accept(struct tscontext *sctx)
 {
     static atomic_uint_fast64_t next_ctx_index = 0;
@@ -57,31 +69,56 @@ inline static void ts_accept(struct tscontext *sctx)
     for (int i = 0; i < sctx->nevents; i++)
     {
         int fd = get_event_fd(&sctx->events[i]);
-        if (fd == sctx->listen_fd)
+        struct net_conn *conn = hmap_get(&sctx->hmap, fd);
+        if (!conn)
         {
+            if (fd == sctx->listen_fd)
+            {
 
-            struct sockaddr_in client_addr;
-            socklen_t client_len = sizeof(client_addr);
-            int conn_fd = accept(sctx->listen_fd, (struct sockaddr *)&client_addr, &client_len);
-            if (conn_fd < 0)
-            {
+                struct sockaddr_in client_addr;
+                socklen_t client_len = sizeof(client_addr);
+                int conn_fd = accept(sctx->listen_fd, (struct sockaddr *)&client_addr, &client_len);
+                if (conn_fd < 0)
+                {
+                    continue;
+                }
+                // Set non-blocking
+                setnonblock(conn_fd);
+                int idx = atomic_fetch_add(&next_ctx_index, 1) % sctx->nthreads;
+                // Add to epoll
+                if (add_event(sctx->ctxs[idx].epfd, conn_fd) < 0)
+                {
+                    perror("epoll_ctl ADD failed");
+                    close(conn_fd);
+                }
                 continue;
+                printf("Accepted new connection: fd %d\n", conn_fd);
             }
-            // Set non-blocking
-            setnonblock(conn_fd);
-            int idx = atomic_fetch_add(&next_ctx_index, 1) % sctx->nthreads;
-            // Add to epoll
-            if (add_event(sctx->ctxs[idx].epfd, conn_fd) < 0)
-            {
-                perror("epoll_ctl ADD failed");
-                close(conn_fd);
-            }
-            continue;
-            printf("Accepted new connection: fd %d\n", conn_fd);
+            // create new conn
+            struct net_conn *conn = conn_new(fd, sctx);
+            hmap_insert(&sctx->hmap, fd, conn);
+            sctx->opened(conn, sctx->udata);
         }
-        // create new conn
-        struct net_conn *conn = conn_new(fd, sctx);
-        sctx->pread_que[sctx->nqreads++] = conn;
+
+        if (conn->bgctx)
+        {
+            // BGWORK(2)
+            // The connection has been added back to the event loop, but it
+            // needs to be attached and restated.
+            sctx->attachs_que[sctx->nattachsq++] = conn;
+        }
+        else if (conn->outlen > 0)
+        {
+            sctx->outs_que[sctx->noutsq++] = conn;
+        }
+        else if (conn->closed)
+        {
+            sctx->closes_que[sctx->nclosesq++] = conn;
+        }
+        else
+        {
+            sctx->pread_que[sctx->nqreads++] = conn;
+        }
     }
 }
 
@@ -112,6 +149,68 @@ inline static void ts_read(struct tscontext *sctx)
     }
 }
 
+inline static void flush_conn(struct net_conn *conn, size_t written)
+{
+    while (written < conn->outlen)
+    {
+        ssize_t n;
+        n = write(conn->fd, conn->out + written, conn->outlen - written);
+        if (n == -1)
+        {
+            if (errno == EAGAIN)
+            {
+                continue;
+            }
+            conn->closed = true;
+            break;
+        }
+        written += n;
+    }
+    // either everything was written or the socket is closed
+    conn->outlen = 0;
+}
+
+inline static void ts_write(struct tscontext *sctx)
+{
+    for (int i = 0; i < sctx->noutsq; i++)
+    {
+        struct net_conn *conn = sctx->outs_que[i];
+        flush_conn(conn, 0);
+        if (conn->closed)
+        {
+            sctx->closes_que[sctx->nclosesq++] = conn;
+        }
+    }
+}
+
+static void conn_free(struct net_conn *conn)
+{
+    if (conn)
+    {
+        if (conn->out)
+        {
+            free(conn->out);
+        }
+        free(conn);
+    }
+}
+
+inline static void ts_close(struct tscontext *sctx)
+{
+    // Close all sockets that need to be closed
+    for (int i = 0; i < sctx->nclosesq; i++)
+    {
+        struct net_conn *conn = sctx->closes_que[i];
+        sctx->closed(conn, sctx->udata);
+        close(conn->fd);
+
+        hmap_delete(&sctx->hmap, conn, NULL);
+        // atomic_fetch_sub_explicit(&nconns, 1, __ATOMIC_RELEASE);
+        // atomic_fetch_sub_explicit(&ctx->nconns, 1, __ATOMIC_RELEASE);
+        conn_free(conn);
+    }
+}
+
 // 处理业务逻辑
 inline static void ts_process(struct tscontext *sctx)
 {
@@ -121,7 +220,7 @@ inline static void ts_process(struct tscontext *sctx)
         char *p = sctx->inspkts_que[i];
         int n = sctx->inspktlens_que[i];
         // 调用用户定义的数据处理函数 实际业务逻辑在这里执行
-        sctx->process(conn, p, n);
+        sctx->process(conn, p, n, NULL);
         if (conn->bgctx)
         {
             // BGWORK(1)
@@ -157,6 +256,10 @@ static void *ts_worker_loop(void *arg)
         }
         sc->nevents = n;
         ts_accept(sc);
+        ts_read(sc);
+        ts_process(sc);
+        ts_write(sc);
+        ts_close(sc);
     }
     return NULL;
 }
@@ -281,6 +384,11 @@ int net_listen(int nthread)
         sctx->inpkts = malloc(PACKETSIZE * sctx->queuesize);
         sctx->inspkts_que = malloc(sizeof(char *) * sctx->queuesize);
         sctx->inspktlens_que = malloc(sizeof(int) * sctx->queuesize);
+        hmap_init_int(&sctx->hmap, sizeof(struct net_conn *));
+        sctx->process = ev_process;
+        sctx->opened = ev_opened;
+        sctx->closed = ev_closed;
+
         if (!sctx)
         {
             perror("malloc failed");

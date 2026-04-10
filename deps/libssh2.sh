@@ -44,8 +44,8 @@ set(CMAKE_RANLIB /usr/local/x86_64-linux-musl-cross/bin/x86_64-linux-musl-ranlib
 
 # 查找库/头路径
 set(CMAKE_FIND_ROOT_PATH
-/home/postgres/cproject/tscp/static/openssl
-/home/postgres/cproject/tscp/static/zlib
+/home/unvdb/cproject/tscp/static/openssl
+/home/unvdb/cproject/tscp/static/zlib
 )
 
 # 查找规则
@@ -64,13 +64,13 @@ cmake \
 	-DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_INSTALL_PREFIX="../../static/libssh2" \
 	-DCRYPTO_BACKEND=OpenSSL \
-	-DOPENSSL_ROOT_DIR="/home/postgres/cproject/tscp/static/openssl" \
-	-DOPENSSL_INCLUDE_DIR="/home/postgres/cproject/tscp/static/openssl/include" \
-	-DOPENSSL_SSL_LIBRARY="/home/postgres/cproject/tscp/static/openssl/lib/libssl.a" \
-	-DOPENSSL_CRYPTO_LIBRARY="/home/postgres/cproject/tscp/static/openssl/lib/libcrypto.a" \
+	-DOPENSSL_ROOT_DIR="/home/unvdb/cproject/tscp/static/openssl" \
+	-DOPENSSL_INCLUDE_DIR="/home/unvdb/cproject/tscp/static/openssl/include" \
+	-DOPENSSL_SSL_LIBRARY="/home/unvdb/cproject/tscp/static/openssl/lib/libssl.a" \
+	-DOPENSSL_CRYPTO_LIBRARY="/home/unvdb/cproject/tscp/static/openssl/lib/libcrypto.a" \
 	-DOPENSSL_USE_STATIC_LIBS=TRUE \
-	-DZLIB_INCLUDE_DIR="/home/postgres/cproject/tscp/static/zlib/include" \
-	-DZLIB_LIBRARY="/home/postgres/cproject/tscp/static/zlib/lib/libz.a" \
+	-DZLIB_INCLUDE_DIR="/home/unvdb/cproject/tscp/static/zlib/include" \
+	-DZLIB_LIBRARY="/home/unvdb/cproject/tscp/static/zlib/lib/libz.a" \
 	-DENABLE_ZLIB_COMPRESSION=ON \
 	-DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DBUILD_TESTING=OFF 

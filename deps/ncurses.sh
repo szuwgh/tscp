@@ -34,7 +34,7 @@ export RANLIB=x86_64-linux-musl-ranlib
 
 # 配置编译选项
 ./configure \
-    --prefix="/home/postgres/cproject/tscp/static/ncurses" \
+    --prefix="/home/unvdb/cproject/tscp/static/ncurses" \
     --without-shared \
     --with-static \
     --enable-widec \

@@ -35,8 +35,8 @@ no-shared \
 no-tests \
 no-engine \
 no-afalgeng \
---prefix="/home/postgres/cproject/tscp/static/openssl" \
---openssldir="/home/postgres/cproject/tscp/static/openssl/ssl"
+--prefix="/home/unvdb/cproject/tscp/static/openssl" \
+--openssldir="/home/unvdb/cproject/tscp/static/openssl/ssl"
 
 make -j$(nproc)
 make install

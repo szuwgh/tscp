@@ -27,7 +27,7 @@ export CC=${CC:-x86_64-linux-musl-gcc}
 export AR=${AR:-x86_64-linux-musl-ar}
 export RANLIB=${RANLIB:-x86_64-linux-musl-ranlib}
 
-./configure --static --prefix="/home/postgres/cproject/tscp/static/zlib"
+./configure --static --prefix="/home/unvdb/cproject/tscp/static/zlib"
 
 make -j$(nproc)
 make install

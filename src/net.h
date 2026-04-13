@@ -14,7 +14,7 @@ struct tscontext
     int queuesize; // 当前连接数
     int nevents;   // epoll_wait 返回的事件数
     int nthreads;  // 工作线程数
-    int nqreads;   // 读队列长度
+    // int nqreads;   // 读队列长度
 
     // 各队列的当前长度计数器
     int nreadsq;   // 待读取连接数
@@ -31,7 +31,7 @@ struct tscontext
     struct net_conn **outs_que;    // 待发送数据的连接队列
     struct net_conn **closes_que;  // 待关闭连接队列
     void *udata;                   // 用户数据指针 由用户在opened回调中设置 后续事件处理函数可通过连接上下文访问
-    char **inpkts;                 // 数据包指针数组
+    char *inpkts;                  // 数据包指针数组
     // 数据包元数据
     char **inspkts_que;  // 对应ins_que队列中各连接的数据包指针数组
     int *inspktlens_que; // 对应ins_que队列中各连接的数据包长度数组
@@ -61,4 +61,6 @@ int net_listen(int nthread);
 
 void net_conn_setudata(struct net_conn *conn, void *udata);
 void *net_conn_udata(struct net_conn *conn);
+
+int add_write(int qfd, int fd);
 #endif

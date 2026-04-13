@@ -50,6 +50,8 @@ hmap_node *hmap_insert(hmap *hmap, const void *key, const void *value);
 
 hmap_node *hmap_get(hmap *hmap, const void *key);
 
+void *hmap_get_value(hmap *hmap, const void *key);
+
 int hmap_delete(hmap *hmap, const void *key, void *out);
 
 bool hmap_contains(hmap *hmap, const void *key);

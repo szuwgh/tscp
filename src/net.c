@@ -30,12 +30,21 @@ static int setnonblock(int fd)
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
-inline static int add_event(int epfd, int fd)
+inline static int add_read(int epfd, int fd)
 {
     event_t ev;
     ev.events = EPOLLIN | EPOLLEXCLUSIVE;
     ev.data.fd = fd;
     return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev); // 线程安全
+}
+
+int add_write(int qfd, int fd)
+{
+
+    struct epoll_event ev = {0};
+    ev.events = EPOLLOUT;
+    ev.data.fd = fd;
+    return epoll_ctl(qfd, EPOLL_CTL_ADD, fd, &ev);
 }
 
 static int get_event_fd(event_t *ev)
@@ -69,7 +78,8 @@ inline static void ts_accept(struct tscontext *sctx)
     for (int i = 0; i < sctx->nevents; i++)
     {
         int fd = get_event_fd(&sctx->events[i]);
-        struct net_conn *conn = hmap_get(&sctx->hmap, fd);
+        struct net_conn **conn_slot = hmap_get_value(&sctx->hmap, &fd);
+        struct net_conn *conn = conn_slot ? *conn_slot : NULL;
         if (!conn)
         {
             if (fd == sctx->listen_fd)
@@ -86,7 +96,7 @@ inline static void ts_accept(struct tscontext *sctx)
                 setnonblock(conn_fd);
                 int idx = atomic_fetch_add(&next_ctx_index, 1) % sctx->nthreads;
                 // Add to epoll
-                if (add_event(sctx->ctxs[idx].epfd, conn_fd) < 0)
+                if (add_read(sctx->ctxs[idx].epfd, conn_fd) < 0)
                 {
                     perror("epoll_ctl ADD failed");
                     close(conn_fd);
@@ -95,8 +105,8 @@ inline static void ts_accept(struct tscontext *sctx)
                 printf("Accepted new connection: fd %d\n", conn_fd);
             }
             // create new conn
-            struct net_conn *conn = conn_new(fd, sctx);
-            hmap_insert(&sctx->hmap, fd, conn);
+            conn = conn_new(fd, sctx);
+            hmap_insert(&sctx->hmap, &fd, &conn);
             sctx->opened(conn, sctx->udata);
         }
 
@@ -117,7 +127,7 @@ inline static void ts_accept(struct tscontext *sctx)
         }
         else
         {
-            sctx->pread_que[sctx->nqreads++] = conn;
+            sctx->pread_que[sctx->nreadsq++] = conn;
         }
     }
 }
@@ -126,10 +136,12 @@ inline static void handle_read(ssize_t n, char *pkt, struct net_conn *conn, stru
 {
     if (n <= 0)
     {
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+            return;
         sctx->closes_que[sctx->nclosesq++] = conn;
         return;
-        n = 0;
     }
+
     pkt[n] = '\0';
     sctx->ins_que[sctx->ninsq] = conn;
     sctx->inspkts_que[sctx->ninsq] = pkt;
@@ -204,7 +216,7 @@ inline static void ts_close(struct tscontext *sctx)
         sctx->closed(conn, sctx->udata);
         close(conn->fd);
 
-        hmap_delete(&sctx->hmap, conn, NULL);
+        hmap_delete(&sctx->hmap, &conn->fd, NULL);
         // atomic_fetch_sub_explicit(&nconns, 1, __ATOMIC_RELEASE);
         // atomic_fetch_sub_explicit(&ctx->nconns, 1, __ATOMIC_RELEASE);
         conn_free(conn);
@@ -231,6 +243,7 @@ inline static void ts_process(struct tscontext *sctx)
         }
         else if (conn->outlen > 0)
         {
+            // 阻塞发送
             sctx->outs_que[sctx->noutsq++] = conn;
         }
         else if (conn->closed)
@@ -238,6 +251,19 @@ inline static void ts_process(struct tscontext *sctx)
             sctx->closes_que[sctx->nclosesq++] = conn;
         }
     }
+}
+
+inline static void ts_reset(struct tscontext *ctx)
+{
+    ctx->nreadsq = 0;
+    ctx->ninsq = 0;
+    ctx->nclosesq = 0;
+    ctx->noutsq = 0;
+    ctx->nattachsq = 0;
+}
+
+inline static void ts_attach(struct tscontext *ctx)
+{
 }
 
 static void *ts_worker_loop(void *arg)
@@ -255,6 +281,8 @@ static void *ts_worker_loop(void *arg)
             continue;
         }
         sc->nevents = n;
+        ts_reset(sc);
+        ts_attach(sc);
         ts_accept(sc);
         ts_read(sc);
         ts_process(sc);
@@ -276,7 +304,7 @@ int create_worker_thread(struct tscontext *wk, int index)
     }
     wk->epfd = epfd;
     wk->index = index;
-
+    add_read(epfd, wk->listen_fd);
     // 2. 创建线程
     pthread_t tid;
     int ret = pthread_create(&tid, NULL, ts_worker_loop, wk);
@@ -300,8 +328,9 @@ int create_worker(struct tscontext *wk, int index)
     }
     wk->epfd = epfd;
     wk->index = index;
-
+    add_read(epfd, wk->listen_fd);
     ts_worker_loop(wk);
+    return epfd;
 }
 
 static int listen_tcp(const char *host, const char *port)
@@ -363,6 +392,22 @@ static int listen_tcp(const char *host, const char *port)
     return fd;
 }
 
+void free_tscontext(struct tscontext *ctx)
+{
+    if (!ctx)
+        return;
+    free(ctx->events);
+    free(ctx->pread_que);
+    free(ctx->ins_que);
+    free(ctx->outs_que);
+    free(ctx->closes_que);
+    free(ctx->attachs_que);
+    free(ctx->inpkts);
+    free(ctx->inspkts_que);
+    free(ctx->inspktlens_que);
+    hmap_deinit(&ctx->hmap);
+}
+
 int net_listen(int nthread)
 {
     int fd = listen_tcp("127.0.0.1", "4567");
@@ -410,6 +455,13 @@ int net_listen(int nthread)
             printf("Created worker thread %d with epoll fd %d\n", i, epfd);
         }
     }
+    /* TODO: 在 shutdown 时统一释放 sc_list 及其队列/线程资源 */
+    for (int i = 0; i < nthread; i++)
+    {
+        struct tscontext *sctx = &sc_list[i];
+        free_tscontext(sctx);
+    }
     free(sc_list);
+
     return 0;
 }

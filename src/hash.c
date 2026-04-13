@@ -236,6 +236,14 @@ hmap_node *hmap_get(hmap *hmap, const void *key)
     return NULL;
 }
 
+void *hmap_get_value(hmap *hmap, const void *key)
+{
+    hmap_node *node = hmap_get(hmap, key);
+    if (node)
+        return node->value;
+    return NULL;
+}
+
 int hmap_delete(hmap *hmap, const void *key, void *out)
 {
     uint32_t hash = hmap->hash_func(key);

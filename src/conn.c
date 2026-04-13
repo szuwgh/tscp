@@ -2,8 +2,6 @@
 
 static void buf_clear(struct buf *buf)
 {
-    // No capacity means this buffer is owned somewhere else and we
-    // must not free the data.
     if (buf->cap)
     {
         free(buf->data);
@@ -15,6 +13,21 @@ void ev_process(struct net_conn *conn, const void *p, size_t len, void *udata)
 
 {
     printf("Received data from fd %d: %.*s\n", conn->fd, (int)len, (char *)p);
+    struct Conn *c = net_conn_udata(conn);
+    // 写一个Ok回去
+    const char *response = "Ok\n";
+    size_t resp_len = strlen(response);
+    char *newbuf = realloc(conn->out, resp_len);
+    if (!newbuf)
+    {
+        perror("realloc");
+        conn->closed = true;
+        return;
+    }
+    conn->out = newbuf;
+    memcpy(conn->out, response, resp_len);
+    conn->outlen = resp_len;
+    // add_write(conn->ctx->epfd, conn->fd);
 }
 
 void ev_opened(struct net_conn *conn5, void *udata)
